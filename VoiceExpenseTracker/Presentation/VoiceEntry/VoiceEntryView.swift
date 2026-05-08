@@ -1,141 +1,234 @@
 //
 //  VoiceEntryView.swift
-//  VoiceExpenseTracker
+//  VoiceExpenseTracker — Presentation Layer
 //
-//  🟢 PLACEHOLDER — Phase 1 shell only
-//  Real implementation happens in Phase 3
+//  🟢 REAL FEATURE — Full voice recording flow
 
 import SwiftUI
 
 struct VoiceEntryView: View {
-    @State private var isAnimating = false
+    @State var viewModel: VoiceEntryViewModel
 
     var body: some View {
         ZStack {
             Color.appBackground.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                // Top bar
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "waveform")
-                            .foregroundColor(.appAccent)
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("SpendVoice")
-                            .font(.appBodyMedium)
-                            .foregroundColor(.appTextPrimary)
-                    }
-                    Spacer()
-                    Image(systemName: "gear")
-                        .foregroundColor(.appTextSecondary)
-                        .font(.system(size: 16))
+            // Main content driven by state
+            switch viewModel.entryState {
+            case .idle, .listening, .processing:
+                recordingScreen
+            case .success(let expense):
+                VoiceSuccessView(expense: expense) {
+                    viewModel.reset()
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-
-                Spacer()
-
-                // Center content
-                VStack(spacing: 28) {
-                    Text("LISTENING NOW")
-                        .font(.appLabel)
-                        .foregroundColor(.appTextSecondary)
-                        .tracking(2)
-
-                    // Placeholder transcript
-                    VStack(spacing: 8) {
-                        Text("Tap mic to start")
-                            .font(.appAmountMedium)
-                            .foregroundColor(.appTextPrimary)
-                        Text("Voice entry coming in Phase 3")
-                            .font(.appBody)
-                            .foregroundColor(.appTextSecondary)
-                            .italic()
-                    }
-
-                    // Placeholder waveform
-                    PlaceholderWaveform(isAnimating: isAnimating)
-                }
-
-                Spacer()
-
-                // Mic button
-                ZStack {
-                    // Glow ring
-                    Circle()
-                        .fill(Color.appAccent.opacity(isAnimating ? 0.12 : 0.06))
-                        .frame(width: 110, height: 110)
-                        .scaleEffect(isAnimating ? 1.15 : 1.0)
-                        .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isAnimating)
-
-                    // Button
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.appAccent, Color.appAccent.opacity(0.7)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 76, height: 76)
-                        .shadow(color: Color.appAccent.opacity(0.4), radius: 20, x: 0, y: 8)
-
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundColor(.black)
-                }
-                .onTapGesture {
-                    withAnimation { isAnimating.toggle() }
-                }
-
-                Spacer()
-                    .frame(height: 50)
+                .transition(.opacity)
+            case .error(let msg):
+                errorScreen(msg)
             }
         }
-        .onAppear { isAnimating = true }
-        .onDisappear { isAnimating = false }
+        .animation(.easeInOut(duration: 0.25), value: viewModel.entryState)
+        .onDisappear { viewModel.cancelRecording() }
     }
-}
 
-// MARK: - Placeholder Waveform
-private struct PlaceholderWaveform: View {
-    let isAnimating: Bool
-    @State private var heights: [CGFloat] = Array(repeating: 12, count: 22)
+    // MARK: - Recording Screen
 
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<22, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.appAccent.opacity(isAnimating ? 0.7 : 0.2))
-                    .frame(width: 4, height: heights[index])
-                    .animation(
-                        .easeInOut(duration: Double.random(in: 0.4...0.9))
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.06),
-                        value: heights[index]
-                    )
+    private var recordingScreen: some View {
+        VStack(spacing: 0) {
+
+            // Top bar
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .foregroundColor(.appAccent)
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("SpendVoice")
+                        .font(.appBodyMedium)
+                        .foregroundColor(.appTextPrimary)
+                }
+                Spacer()
+                Image(systemName: "gear")
+                    .foregroundColor(.appTextSecondary)
+                    .font(.system(size: 16))
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+
+            Spacer()
+
+            // Center content
+            VStack(spacing: 20) {
+                statusLabel
+                transcriptDisplay
+                WaveformView(isActive: isListening)
+                    .padding(.top, 8)
+            }
+
+            Spacer()
+
+            // Mic button
+            micButton
+                .padding(.bottom, 32)
+
+            // Bottom chips
+            bottomChips
+                .padding(.bottom, 24)
         }
-        .frame(height: 60)
-        .onAppear {
-            if isAnimating { randomizeHeights() }
+    }
+
+    // MARK: - Status Label
+    private var statusLabel: some View {
+        Text(statusText)
+            .font(.appLabel)
+            .foregroundColor(.appTextSecondary)
+            .tracking(2)
+            .animation(.none, value: viewModel.entryState)
+    }
+
+    private var statusText: String {
+        switch viewModel.entryState {
+        case .idle:               return "TAP MIC TO START"
+        case .listening:          return "LISTENING NOW"
+        case .processing:         return "PROCESSING..."
+        default:                  return ""
         }
-        .onChange(of: isAnimating) { _, newValue in
-            if newValue {
-                randomizeHeights()
+    }
+
+    // MARK: - Transcript Display
+    private var transcriptDisplay: some View {
+        VStack(spacing: 8) {
+            if case .processing(let t) = viewModel.entryState {
+                transcriptText(t)
+            } else if isListening {
+                if viewModel.currentTranscript.isEmpty {
+                    Text("Go ahead...")
+                        .font(.appHeadingMedium)
+                        .foregroundColor(.appTextTertiary)
+                        .italic()
+                } else {
+                    transcriptText(viewModel.currentTranscript)
+                }
             } else {
-                heights = Array(repeating: 12, count: 22)
+                Text("Voice Expense Tracker")
+                    .font(.appAmountMedium)
+                    .foregroundColor(.appTextPrimary)
+                Text("Say: \"coffee 50k\"")
+                    .font(.appBody)
+                    .foregroundColor(.appTextSecondary)
+                    .italic()
+            }
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 32)
+        .frame(minHeight: 90)
+    }
+
+    private func transcriptText(_ text: String) -> some View {
+        Text(text.capitalized)
+            .font(.appAmountMedium)
+            .foregroundColor(.appTextPrimary)
+            .multilineTextAlignment(.center)
+    }
+
+    // MARK: - Mic Button
+
+    private var micButton: some View {
+        Button {
+            Task {
+                if isListening {
+                    viewModel.stopRecording()
+                } else if case .idle = viewModel.entryState {
+                    await viewModel.startRecording()
+                }
+            }
+        } label: {
+            ZStack {
+                // Glow ring (active state)
+                if isListening {
+                    Circle()
+                        .fill(Color.appAccent.opacity(0.15))
+                        .frame(width: 110, height: 110)
+                        .scaleEffect(isListening ? 1.1 : 1.0)
+                        .animation(
+                            .easeInOut(duration: 1.0).repeatForever(autoreverses: true),
+                            value: isListening
+                        )
+                }
+
+                // Main circle
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: isListening
+                                ? [Color.appAccent, Color.appAccent.opacity(0.8)]
+                                : [Color.appSurface, Color.appSurfaceElevated],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 76, height: 76)
+                    .shadow(
+                        color: Color.appAccent.opacity(isListening ? 0.5 : 0.0),
+                        radius: 20, y: 8
+                    )
+
+                if case .processing = viewModel.entryState {
+                    ProgressView().tint(isListening ? .black : .appAccent)
+                } else {
+                    Image(systemName: isListening ? "stop.fill" : "mic.fill")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundColor(isListening ? .black : .appAccent)
+                }
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isListening)
+    }
+
+    // MARK: - Bottom Chips
+
+    private var bottomChips: some View {
+        HStack(spacing: 12) {
+            CategoryChipView(icon: "fork.knife", label: "Dining", color: .appTextSecondary)
+            CategoryChipView(icon: "creditcard", label: "Cash", color: .appTextSecondary)
+        }
+        .opacity(isListening ? 0.5 : 1.0)
+    }
+
+    // MARK: - Error Screen
+
+    private func errorScreen(_ message: String) -> some View {
+        VStack(spacing: 24) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 52))
+                .foregroundColor(.appWarning)
+
+            Text(message)
+                .font(.appBodyMedium)
+                .foregroundColor(.appTextPrimary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            Button {
+                viewModel.reset()
+            } label: {
+                Text("Try Again")
+                    .font(.appBodyMedium)
+                    .foregroundColor(.black)
+                    .frame(width: 160, height: 48)
+                    .background(Color.appAccent)
+                    .clipShape(Capsule())
             }
         }
     }
 
-    private func randomizeHeights() {
-        for i in 0..<22 {
-            heights[i] = CGFloat.random(in: 8...56)
-        }
+    // MARK: - Helpers
+
+    private var isListening: Bool {
+        if case .listening = viewModel.entryState { return true }
+        return false
     }
 }
 
 #Preview {
-    VoiceEntryView()
+    let mock = DependencyContainer.makeMock()
+    VoiceEntryView(viewModel: mock.makeVoiceEntryViewModel())
 }
